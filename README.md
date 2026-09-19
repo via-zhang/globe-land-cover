@@ -9,7 +9,7 @@ against satellite imagery for the surrounding square kilometre.
 
 ```bash
 npm install
-npm run data     # GeoPackage -> public/data (needs Python 3, ~1 min)
+npm run data
 npm run dev
 ```
 

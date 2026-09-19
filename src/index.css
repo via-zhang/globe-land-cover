@@ -3,7 +3,6 @@
 @import 'maplibre-gl/dist/maplibre-gl.css';
 
 @theme {
-  /* Cooler, deeper than the previous slate — closer to an unlit instrument. */
   --color-base: #06080b;
   --color-surface: #0b0f14;
   --color-raised: #121922;
@@ -14,12 +13,10 @@
   --color-ink-muted: #8695a6;
   --color-ink-faint: #56636f;
 
-  /* Green reads "recorded on the ground". */
   --color-leaf: #86efac;
   --color-leaf-deep: #22c55e;
   --color-leaf-dim: #2f5f43;
 
-  /* Amber reads "measured from orbit" — used only for satellite readouts. */
   --color-orbit: #e3a857;
   --color-orbit-dim: #5c421f;
 
