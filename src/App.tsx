@@ -6,7 +6,8 @@ import { loadBootstrap, toGeoJSON, type Bootstrap } from './lib/data'
 import { countMatching, matchesFilters, toMapFilter } from './lib/filters'
 import { useMediaQuery } from './lib/useMediaQuery'
 import MapLegend from './components/MapLegend'
-import { EMPTY_FILTERS, type ColorMode, type Filters } from './lib/types'
+import MobileSheet from './components/MobileSheet'
+import { EMPTY_FILTERS, type ColorMode, type Filters, type Projection } from './lib/types'
 
 function readUrl(): { fid: number | null; filters: Filters } {
   const params = new URLSearchParams(window.location.search)
@@ -54,8 +55,8 @@ export default function App() {
   const [filters, setFilters] = useState<Filters>(initial.current.filters)
   const [selectedFid, setSelectedFid] = useState<number | null>(initial.current.fid)
   const [fitBounds, setFitBounds] = useState<[number, number, number, number] | null>(null)
-  const [sheetTall, setSheetTall] = useState(false)
   const [colorMode, setColorMode] = useState<ColorMode>('uniform')
+  const [projection, setProjection] = useState<Projection>('globe')
   const wide = useMediaQuery('(min-width: 1024px)')
 
   useEffect(() => {
@@ -113,7 +114,6 @@ export default function App() {
 
   const handleSelect = useCallback((fid: number) => {
     setSelectedFid(fid)
-    setSheetTall(false)
   }, [])
 
   useEffect(() => {
@@ -162,9 +162,16 @@ export default function App() {
           fitBounds={fitBounds}
           colorMode={colorMode}
           coverGroups={data.meta.coverGroups}
+          projection={projection}
           onSelect={handleSelect}
         />
-        <MapLegend meta={data.meta} mode={colorMode} onChange={setColorMode} />
+        <MapLegend
+          meta={data.meta}
+          mode={colorMode}
+          onChange={setColorMode}
+          projection={projection}
+          onProjectionChange={setProjection}
+        />
         <FilterBar
           meta={data.meta}
           countries={data.countries}
@@ -189,30 +196,16 @@ export default function App() {
             />
           </aside>
         ) : (
-          /* Narrow screens: a sheet over the map with two heights. */
-          <aside
-            className={`absolute inset-x-0 bottom-0 z-40 rounded-t-xl border-t border-line shadow-2xl shadow-black/70 transition-[height] ${
-              sheetTall ? 'h-[92svh]' : 'h-[62svh]'
-            }`}
-          >
-            <button
-              type="button"
-              onClick={() => setSheetTall((value) => !value)}
-              aria-label={sheetTall ? 'Shrink panel' : 'Expand panel'}
-              className="absolute inset-x-0 top-0 z-10 flex h-6 items-center justify-center rounded-t-xl bg-surface"
-            >
-              <span className="h-1 w-10 rounded-full bg-line" />
-            </button>
-            <div className="h-full overflow-hidden rounded-t-xl pt-6">
-              <DetailPanel
-                fid={selectedFid}
-                meta={data.meta}
-                outlines={data.outlines}
-                outsideFilters={outsideFilters}
-                onClose={() => setSelectedFid(null)}
-              />
-            </div>
-          </aside>
+          /* Narrow screens: a sheet over the map, draggable between heights. */
+          <MobileSheet onClose={() => setSelectedFid(null)}>
+            <DetailPanel
+              fid={selectedFid}
+              meta={data.meta}
+              outlines={data.outlines}
+              outsideFilters={outsideFilters}
+              onClose={() => setSelectedFid(null)}
+            />
+          </MobileSheet>
         ))}
     </div>
   )

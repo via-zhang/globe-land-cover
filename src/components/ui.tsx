@@ -98,36 +98,37 @@ export function Section({
 
   return (
     <section className="border-t border-line-soft px-4 py-4 first:border-t-0">
-      <header className="flex items-center gap-2.5">
-        {collapsible ? (
-          <button
-            type="button"
-            onClick={() => setOpen((value) => !value)}
-            aria-expanded={open}
-            aria-controls={bodyId}
-            className="group flex min-w-0 items-center gap-2 text-left"
+      {collapsible ? (
+        /* The whole row is the control, not just the chevron and label. */
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+          aria-controls={bodyId}
+          className="group flex w-full cursor-pointer items-center gap-2.5 text-left"
+        >
+          <svg
+            viewBox="0 0 12 12"
+            aria-hidden
+            className={`h-3 w-3 shrink-0 text-leaf/60 transition-transform ${
+              open ? 'rotate-90' : ''
+            }`}
           >
-            <svg
-              viewBox="0 0 12 12"
-              aria-hidden
-              className={`h-3 w-3 shrink-0 text-leaf/60 transition-transform ${
-                open ? 'rotate-90' : ''
-              }`}
-            >
-              <path d="M4.5 2.5 8 6l-3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
-            </svg>
-            <h3 className={`${SECTION_TITLE} transition group-hover:text-ink`}>{title}</h3>
-          </button>
-        ) : (
-          <>
-            <Tick />
-            <h3 className={SECTION_TITLE}>{title}</h3>
-          </>
-        )}
-        {/* Rule runs out to the action, giving each header a measured baseline. */}
-        <span className="tick-rule h-px min-w-4 flex-1" aria-hidden />
-        {action}
-      </header>
+            <path d="M4.5 2.5 8 6l-3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+          </svg>
+          <h3 className={`${SECTION_TITLE} transition group-hover:text-ink`}>{title}</h3>
+          <span className="tick-rule h-px min-w-4 flex-1" aria-hidden />
+          {action}
+        </button>
+      ) : (
+        <header className="flex items-center gap-2.5">
+          <Tick />
+          <h3 className={SECTION_TITLE}>{title}</h3>
+          {/* Rule runs out to the action, giving each header a measured baseline. */}
+          <span className="tick-rule h-px min-w-4 flex-1" aria-hidden />
+          {action}
+        </header>
+      )}
       {/* Collapsed content is unmounted, so its photos are not fetched until opened. */}
       {expanded && (
         <div id={bodyId} className="mt-2.5">

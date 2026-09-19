@@ -21,11 +21,12 @@ const FACE_ORDER: Direction[] = ['East', 'West', 'Upward', 'Downward', 'South', 
 const FACE_PX = 1024
 
 /**
- * Horizontal field of view, in degrees. A little past one 90° face, so the
- * view opens on a whole direction plus a sliver of its neighbours — enough to
- * show which way the scene continues without having to drag first.
+ * Horizontal field of view, in degrees. Comfortably past one 90° face, so the
+ * view opens on a whole direction with a good part of its neighbours either
+ * side. Much beyond this and the flat cube faces start to stretch at the
+ * corners, which gnomonic projection makes unavoidable.
  */
-const TARGET_HFOV = 102
+const TARGET_HFOV = 118
 
 const MISSING_FILL = '#c3c9d1'
 const MISSING_GRID = '#b3bac4'
@@ -256,9 +257,20 @@ export default function PanoramaViewer({ photos, observationId }: Props) {
   const targetYawRef = useRef<number | null>(null)
   /** Set from the viewport shape; the user's zoom multiplies it. */
   const baseFovRef = useRef(baseFovFor(16 / 10))
+  /** Where zoom is now, and where input wants it — eased between in the loop. */
   const zoomRef = useRef(1)
+  const zoomTargetRef = useRef(1)
   /** The FOV actually in use, for scaling drag sensitivity. */
   const fovRef = useRef(baseFovRef.current)
+  /** Every pointer currently down, so two fingers can be told from one. */
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>())
+  const pinchRef = useRef<{ distance: number; zoom: number } | null>(null)
+
+  const pointerDistance = useCallback(() => {
+    const [a, b] = [...pointersRef.current.values()]
+    if (!a || !b) return 0
+    return Math.hypot(a.x - b.x, a.y - b.y)
+  }, [])
   /** Driven from the render loop rather than React state — see Compass. */
   const coneRef = useRef<SVGGElement>(null)
   const headingRef = useRef<HTMLSpanElement>(null)
@@ -318,6 +330,9 @@ export default function PanoramaViewer({ photos, observationId }: Props) {
           yawRef.current += delta * 0.12
         }
       }
+      // Ease toward the requested zoom so wheel notches glide instead of
+      // stepping; the factor is high enough that a pinch still feels direct.
+      zoomRef.current += (zoomTargetRef.current - zoomRef.current) * 0.25
       fovRef.current = THREE.MathUtils.clamp(baseFovRef.current * zoomRef.current, 30, 100)
       camera.fov = fovRef.current
       camera.updateProjectionMatrix()
@@ -350,9 +365,22 @@ export default function PanoramaViewer({ photos, observationId }: Props) {
     const observer = new ResizeObserver(resize)
     observer.observe(mount)
 
+    /*
+     * Safari on iOS fires its own pinch gestures and will zoom the whole page
+     * even where touch-action is none, so they are swallowed here. Other
+     * browsers never fire these, and `wheel` needs a non-passive listener to
+     * be cancellable at all.
+     */
+    const swallow = (event: Event) => event.preventDefault()
+    const gestures = ['gesturestart', 'gesturechange', 'gestureend']
+    for (const name of gestures) mount.addEventListener(name, swallow)
+    mount.addEventListener('wheel', swallow, { passive: false })
+
     return () => {
       cancelAnimationFrame(frame)
       observer.disconnect()
+      for (const name of gestures) mount.removeEventListener(name, swallow)
+      mount.removeEventListener('wheel', swallow)
       materials.forEach((material) => {
         material.map?.dispose()
         material.dispose()
@@ -375,6 +403,9 @@ export default function PanoramaViewer({ photos, observationId }: Props) {
     pitchRef.current = 0
     targetYawRef.current = null
     zoomRef.current = 1
+    zoomTargetRef.current = 1
+    pointersRef.current.clear()
+    pinchRef.current = null
     setFacing('North')
 
     const apply = (index: number, image: HTMLImageElement | null, size: number) => {
@@ -425,40 +456,76 @@ export default function PanoramaViewer({ photos, observationId }: Props) {
     setFacing((['North', 'West', 'South', 'East'] as Direction[])[quadrant])
   }, [])
 
+  /**
+   * One finger looks around, two fingers pinch to zoom.
+   *
+   * Tracked through pointer events rather than touch events so mouse, pen and
+   * touch share one path. Every active pointer is kept so a second finger
+   * switches cleanly into a pinch and back out again without the view jumping.
+   */
   const onPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       const element = event.currentTarget
-      element.setPointerCapture(event.pointerId)
+      try {
+        element.setPointerCapture(event.pointerId)
+      } catch {
+        // The pointer can already be gone; tracking below still works.
+      }
       targetYawRef.current = null
-      let lastX = event.clientX
-      let lastY = event.clientY
+      pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
 
-      const move = (moveEvent: PointerEvent) => {
-        const scale = (fovRef.current / 68) * 0.0042
-        yawRef.current += (moveEvent.clientX - lastX) * scale
-        pitchRef.current = THREE.MathUtils.clamp(
-          pitchRef.current + (moveEvent.clientY - lastY) * scale,
-          -Math.PI / 2 + 0.01,
-          Math.PI / 2 - 0.01,
+      if (pointersRef.current.size === 2) {
+        pinchRef.current = { distance: pointerDistance(), zoom: zoomTargetRef.current }
+      }
+    },
+    [],
+  )
+
+  const onPointerMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const pointers = pointersRef.current
+      const previous = pointers.get(event.pointerId)
+      if (!previous) return
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+
+      if (pointers.size >= 2) {
+        const pinch = pinchRef.current
+        if (!pinch) return
+        const distance = pointerDistance()
+        if (distance <= 0) return
+        // Spreading the fingers narrows the field of view.
+        zoomTargetRef.current = THREE.MathUtils.clamp(
+          (pinch.zoom * pinch.distance) / distance,
+          0.5,
+          1.5,
         )
-        lastX = moveEvent.clientX
-        lastY = moveEvent.clientY
-        updateFacing()
+        return
       }
-      const up = () => {
-        element.removeEventListener('pointermove', move)
-        element.removeEventListener('pointerup', up)
-        element.removeEventListener('pointercancel', up)
-      }
-      element.addEventListener('pointermove', move)
-      element.addEventListener('pointerup', up)
-      element.addEventListener('pointercancel', up)
+
+      const scale = (fovRef.current / 68) * 0.0042
+      yawRef.current += (event.clientX - previous.x) * scale
+      pitchRef.current = THREE.MathUtils.clamp(
+        pitchRef.current + (event.clientY - previous.y) * scale,
+        -Math.PI / 2 + 0.01,
+        Math.PI / 2 - 0.01,
+      )
+      updateFacing()
     },
     [updateFacing],
   )
 
+  const onPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    pointersRef.current.delete(event.pointerId)
+    // Lifting one finger of a pinch must not snap the view: the remaining
+    // pointer's stored position is already current, so panning resumes from
+    // where it is rather than from where the pinch began.
+    if (pointersRef.current.size < 2) pinchRef.current = null
+  }, [])
+
   const onWheel = useCallback((event: React.WheelEvent) => {
-    zoomRef.current = THREE.MathUtils.clamp(zoomRef.current + event.deltaY * 0.0009, 0.5, 1.5)
+    // Trackpad pinch arrives as ctrl+wheel and is far finer than mouse notches.
+    const step = event.ctrlKey ? event.deltaY * 0.004 : event.deltaY * 0.0012
+    zoomTargetRef.current = THREE.MathUtils.clamp(zoomTargetRef.current + step, 0.5, 1.5)
   }, [])
 
   const onKeyDown = useCallback(
@@ -507,6 +574,9 @@ export default function PanoramaViewer({ photos, observationId }: Props) {
         aria-label="Interactive 360 degree view of the observation site. Drag to look around, or use the arrow keys."
         tabIndex={0}
         onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
         onWheel={onWheel}
         onKeyDown={onKeyDown}
         className="aspect-[4/3] w-full cursor-grab touch-none active:cursor-grabbing sm:aspect-[16/10]"

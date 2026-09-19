@@ -50,6 +50,13 @@ export interface PointIndex {
 
 export type ColorMode = 'uniform' | 'cover'
 
+/**
+ * `globe` renders a sphere when zoomed out and eases into mercator as you zoom
+ * in; `mercator` is always flat. MapLibre implements no equal-area projection,
+ * so a flat view necessarily exaggerates area away from the equator.
+ */
+export type Projection = 'globe' | 'mercator'
+
 /** One observation with every attribute the GeoPackage carried. */
 export interface Observation {
   fid: number

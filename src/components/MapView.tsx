@@ -3,7 +3,7 @@ import maplibregl, {
   type DataDrivenPropertyValueSpecification,
   type FilterSpecification,
 } from 'maplibre-gl'
-import type { ColorMode, CoverGroup } from '../lib/types'
+import type { ColorMode, CoverGroup, Projection } from '../lib/types'
 
 const SOURCE = 'observations'
 const OUTLINE_SOURCE = 'country-outlines'
@@ -22,6 +22,22 @@ const OSM_BOUNDARY_LAYERS = ['boundary_country_z0-4', 'boundary_country_z5-']
 
 const UNIFORM_COLOR = '#86efac'
 const UNCLASSIFIED_COLOR = '#64748b'
+
+/** Share of the shorter viewport edge the globe should span on first paint. */
+const GLOBE_FILL = 0.88
+
+/**
+ * Opening zoom, chosen so the globe fills the frame rather than floating in
+ * it. MapLibre's world is 512·2^zoom pixels around, so the sphere renders
+ * roughly that divided by π across — invert it for the size we want. A fixed
+ * zoom cannot work here: one that fills a desktop window overflows a phone.
+ */
+function initialZoom(width: number, height: number): number {
+  const shortest = Math.min(width, height)
+  if (shortest <= 0) return 1.6
+  const zoom = Math.log2((GLOBE_FILL * shortest * Math.PI) / 512)
+  return Math.max(1, Math.min(zoom, 3.2))
+}
 
 /**
  * Either one green for every observation, or the site's dominant land cover.
@@ -53,6 +69,7 @@ interface Props {
   fitBounds: [number, number, number, number] | null
   colorMode: ColorMode
   coverGroups: CoverGroup[]
+  projection: Projection
   onSelect: (fid: number) => void
 }
 
@@ -64,6 +81,7 @@ export default function MapView({
   fitBounds,
   colorMode,
   coverGroups,
+  projection,
   onSelect,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -71,6 +89,9 @@ export default function MapView({
   const readyRef = useRef(false)
   const onSelectRef = useRef(onSelect)
   onSelectRef.current = onSelect
+  // Read at construction time only; changes flow through the effect below.
+  const projectionRef = useRef(projection)
+  projectionRef.current = projection
 
   useEffect(() => {
     const container = containerRef.current
@@ -80,7 +101,7 @@ export default function MapView({
       container,
       style: STYLE_URL,
       center: [10, 25],
-      zoom: 1.6,
+      zoom: initialZoom(container.clientWidth, container.clientHeight),
       minZoom: 1,
       maxZoom: 18,
       attributionControl: false,
@@ -102,6 +123,11 @@ export default function MapView({
     )
 
     map.on('load', () => {
+      // Projection is not a constructor option in MapLibre 5, so it is applied
+      // as soon as the style is ready — before the first layer is added, so
+      // there is no flash of the wrong projection.
+      map.setProjection({ type: projectionRef.current })
+
       // The basemap's own country borders are near-invisible on dark. Lift
       // them so they carry the close-up view, where Natural Earth's 1:110m
       // outlines would be far too coarse.
@@ -245,6 +271,12 @@ export default function MapView({
     if (!map || !readyRef.current) return
     map.setPaintProperty(POINT_LAYER, 'circle-color', circleColor(colorMode, coverGroups))
   }, [colorMode, coverGroups])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !readyRef.current) return
+    map.setProjection({ type: projection })
+  }, [projection])
 
   useEffect(() => {
     const map = mapRef.current

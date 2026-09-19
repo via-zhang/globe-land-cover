@@ -1,13 +1,60 @@
-import type { ColorMode, Meta } from '../lib/types'
+import type { ColorMode, Meta, Projection } from '../lib/types'
 
 interface Props {
   meta: Meta
   mode: ColorMode
   onChange: (mode: ColorMode) => void
+  projection: Projection
+  onProjectionChange: (projection: Projection) => void
 }
 
-/** Switches the point colouring, and explains it when it means something. */
-export default function MapLegend({ meta, mode, onChange }: Props) {
+/** A small row of segmented options, mono-cased to match the instrument chrome. */
+function Segmented<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: T
+  options: Array<{ id: T; label: string }>
+  onChange: (next: T) => void
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="font-mono text-[9px] tracking-[0.16em] text-ink-faint uppercase">
+        {label}
+      </span>
+      <span className="tick-rule h-px flex-1" aria-hidden />
+      <div className="flex gap-0.5" role="group" aria-label={label}>
+        {options.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => onChange(option.id)}
+            aria-pressed={value === option.id}
+            className={`rounded-sm px-1.5 py-0.5 font-mono text-[9px] tracking-wider uppercase transition ${
+              value === option.id
+                ? 'bg-leaf/15 text-leaf'
+                : 'text-ink-faint hover:text-ink-muted'
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** Switches the map projection and the point colouring. */
+export default function MapLegend({
+  meta,
+  mode,
+  onChange,
+  projection,
+  onProjectionChange,
+}: Props) {
   const modes: Array<{ id: ColorMode; label: string }> = [
     { id: 'uniform', label: 'Uniform' },
     { id: 'cover', label: 'Land cover' },
@@ -15,7 +62,16 @@ export default function MapLegend({ meta, mode, onChange }: Props) {
 
   return (
     <div className="pointer-events-auto absolute bottom-3 left-3 z-20 max-w-[15rem]">
-      <div className="grain lit-edge rounded-lg border border-line bg-base/92 p-2 shadow-xl shadow-black/50 backdrop-blur-md">
+      <div className="grain lit-edge space-y-1.5 rounded-lg border border-line bg-base/92 p-2 shadow-xl shadow-black/50 backdrop-blur-md">
+        <Segmented
+          label="View"
+          value={projection}
+          options={[
+            { id: 'globe', label: 'Globe' },
+            { id: 'mercator', label: 'Flat' },
+          ]}
+          onChange={onProjectionChange}
+        />
         <div className="flex items-center gap-2">
           <span className="font-mono text-[9px] tracking-[0.16em] text-ink-faint uppercase">
             Color
