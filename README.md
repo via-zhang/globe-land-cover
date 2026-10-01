@@ -1,9 +1,11 @@
 # GLOBE Land Cover Explorer
 
-An interactive map of 60,791 [NASA GLOBE](https://www.globe.gov/) land cover
+An interactive map of 60k+ [NASA GLOBE](https://www.globe.gov/) land cover
 observations. Click a point to open its six direction photos as a navigable
 360° view, read every field the GeoPackage carries, and compare the site
-against satellite imagery for the surrounding square kilometre.
+against satellite imagery for the surrounding km².
+
+Tech stack: React app that draws a map with MapLibre and a photo cube with Three.js.
 
 ## Running it
 
