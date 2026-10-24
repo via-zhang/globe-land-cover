@@ -56,6 +56,7 @@ export default function App() {
   const [selectedFid, setSelectedFid] = useState<number | null>(initial.current.fid)
   const [fitBounds, setFitBounds] = useState<[number, number, number, number] | null>(null)
   const [colorMode, setColorMode] = useState<ColorMode>('uniform')
+  const [basemapFailed, setBasemapFailed] = useState(false)
   const [projection, setProjection] = useState<Projection>('globe')
   const wide = useMediaQuery('(min-width: 1024px)')
 
@@ -164,7 +165,13 @@ export default function App() {
           coverGroups={data.meta.coverGroups}
           projection={projection}
           onSelect={handleSelect}
+          onBasemapFallback={() => setBasemapFailed(true)}
         />
+        {basemapFailed && (
+          <p className="pointer-events-none absolute inset-x-0 top-20 z-20 mx-auto w-fit max-w-[90%] rounded-md border border-line bg-base/92 px-3 py-1.5 text-center font-mono text-[10px] tracking-wide text-ink-muted backdrop-blur-md">
+            Basemap tiles unavailable; showing outlines and observations only
+          </p>
+        )}
         <MapLegend
           meta={data.meta}
           mode={colorMode}

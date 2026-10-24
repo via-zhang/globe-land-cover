@@ -387,6 +387,11 @@ export default function PanoramaViewer({ photos, observationId }: Props) {
       })
       cube.geometry.dispose()
       renderer.dispose()
+      // dispose() frees GPU memory but keeps the WebGL context itself alive.
+      // Chrome allows only ~16 at once and drops the OLDEST when it runs out,
+      // which is the map created at page load. Without this the panel going
+      // in and out eventually blanks the map.
+      renderer.forceContextLoss()
       renderer.domElement.remove()
       materialsRef.current = []
     }

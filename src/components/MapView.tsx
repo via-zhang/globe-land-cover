@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import maplibregl, {
   type DataDrivenPropertyValueSpecification,
   type FilterSpecification,
+  type StyleSpecification,
 } from 'maplibre-gl'
 import type { ColorMode, CoverGroup, Projection } from '../lib/types'
 
@@ -16,6 +17,22 @@ const SELECTED_LAYER = 'observation-selected'
  * REQUIRED" across every tile, so it is not usable unauthenticated.)
  */
 const STYLE_URL = 'https://tiles.openfreemap.org/styles/dark'
+
+/** How long to wait for the basemap style before giving up on it. */
+const STYLE_TIMEOUT_MS = 10000
+
+/**
+ * Used when the tile server cannot be reached. Dark background only; the
+ * country outlines and observations are added on top from local data, so the
+ * tool still works with no network beyond its own files.
+ */
+const FALLBACK_STYLE: StyleSpecification = {
+  version: 8,
+  sources: {},
+  layers: [
+    { id: 'background', type: 'background', paint: { 'background-color': '#06080b' } },
+  ],
+}
 
 /** Country borders the style already draws from OSM, restyled for contrast. */
 const OSM_BOUNDARY_LAYERS = ['boundary_country_z0-4', 'boundary_country_z5-']
@@ -71,6 +88,8 @@ interface Props {
   coverGroups: CoverGroup[]
   projection: Projection
   onSelect: (fid: number) => void
+  /** Called when the basemap tiles could not be loaded. */
+  onBasemapFallback: () => void
 }
 
 export default function MapView({
@@ -83,6 +102,7 @@ export default function MapView({
   coverGroups,
   projection,
   onSelect,
+  onBasemapFallback,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
@@ -92,6 +112,10 @@ export default function MapView({
   // Read at construction time only; changes flow through the effect below.
   const projectionRef = useRef(projection)
   projectionRef.current = projection
+  const layersAddedRef = useRef(false)
+  const fellBackRef = useRef(false)
+  const onBasemapFallbackRef = useRef(onBasemapFallback)
+  onBasemapFallbackRef.current = onBasemapFallback
 
   useEffect(() => {
     const container = containerRef.current
@@ -122,7 +146,10 @@ export default function MapView({
       'bottom-right',
     )
 
-    map.on('load', () => {
+    // Adding the layers is split out and made idempotent so it can run again
+    // against the offline fallback style if the basemap never arrives.
+    const addAppLayers = () => {
+      if (layersAddedRef.current || map.getLayer(POINT_LAYER)) return
       // Projection is not a constructor option in MapLibre 5, so it is applied
       // as soon as the style is ready — before the first layer is added, so
       // there is no flash of the wrong projection.
@@ -214,9 +241,33 @@ export default function MapView({
         },
       })
 
+      layersAddedRef.current = true
       readyRef.current = true
       map.setFilter(POINT_LAYER, filter)
       if (selectedFid !== null) map.setFilter(SELECTED_LAYER, ['==', ['get', 'fid'], selectedFid])
+    }
+
+    map.on('load', addAppLayers)
+
+    /*
+     * If the basemap style never loads, MapLibre never fires `load`, so the
+     * observations are never added either and the map is simply black. Swap in
+     * a local style built from the country outlines we already ship, so the
+     * data stays usable without the tile server.
+     */
+    const useFallbackBasemap = () => {
+      if (layersAddedRef.current || fellBackRef.current) return
+      fellBackRef.current = true
+      onBasemapFallbackRef.current()
+      map.setStyle(FALLBACK_STYLE)
+      map.once('styledata', addAppLayers)
+    }
+
+    const styleTimer = window.setTimeout(useFallbackBasemap, STYLE_TIMEOUT_MS)
+    map.on('error', () => {
+      // Individual tile errors are routine; only a style that never loads at
+      // all leaves the map empty.
+      if (!map.isStyleLoaded()) useFallbackBasemap()
     })
 
     const pick = (event: maplibregl.MapMouseEvent) => {
@@ -247,6 +298,7 @@ export default function MapView({
 
     return () => {
       readyRef.current = false
+      window.clearTimeout(styleTimer)
       map.remove()
       mapRef.current = null
     }
