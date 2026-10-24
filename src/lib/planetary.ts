@@ -24,6 +24,7 @@ export function bboxAround(lon: number, lat: number, meters = 1000): BBox {
 interface StacItem {
   id: string
   collection: string
+  geometry?: unknown
   properties: Record<string, unknown>
   assets: Record<string, { href: string }>
 }
@@ -107,6 +108,78 @@ export interface Chip {
   empty?: string
 }
 
+
+/**
+ * Does this scene's real footprint cover the point?
+ *
+ * A STAC bbox search matches any scene whose *bounding box* overlaps, but a
+ * Landsat or Sentinel footprint is a rotated quadrilateral, so a scene can
+ * match the search and still have nothing but fill pixels over the site.
+ */
+function containsPoint(geometry: unknown, lon: number, lat: number): boolean {
+  const geo = geometry as { type?: string; coordinates?: number[][][] | number[][][][] }
+  if (!geo?.type || !geo.coordinates) return true // unknown shape: do not exclude
+  const polygons =
+    geo.type === 'Polygon'
+      ? [geo.coordinates as number[][][]]
+      : geo.type === 'MultiPolygon'
+        ? (geo.coordinates as number[][][][])
+        : []
+  if (polygons.length === 0) return true
+
+  for (const polygon of polygons) {
+    const ring = polygon[0]
+    if (!ring) continue
+    let inside = false
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+      const [xi, yi] = ring[i]
+      const [xj, yj] = ring[j]
+      if (yi > lat !== yj > lat && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+        inside = !inside
+      }
+    }
+    if (inside) return true
+  }
+  return false
+}
+
+/** Fraction of a rendered chip that is missing data, as transparent pixels. */
+const SAMPLE = 96
+async function missingFraction(url: string, signal: AbortSignal): Promise<number> {
+  const image = await new Promise<HTMLImageElement | null>((resolve) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    const done = (v: HTMLImageElement | null) => resolve(signal.aborted ? null : v)
+    img.onload = () => done(img)
+    img.onerror = () => done(null)
+    img.src = url
+  })
+  // A chip that will not load is as useless as an empty one.
+  if (!image) return 1
+
+  const canvas = document.createElement('canvas')
+  canvas.width = SAMPLE
+  canvas.height = SAMPLE
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (!ctx) return 0
+  // Nearest-neighbour keeps alpha values exact instead of blending edges.
+  ctx.imageSmoothingEnabled = false
+  ctx.clearRect(0, 0, SAMPLE, SAMPLE)
+  ctx.drawImage(image, 0, 0, SAMPLE, SAMPLE)
+
+  let empty = 0
+  const { data } = ctx.getImageData(0, 0, SAMPLE, SAMPLE)
+  for (let i = 3; i < data.length; i += 4) if (data[i] < 8) empty += 1
+  return empty / (SAMPLE * SAMPLE)
+}
+
+/**
+ * Above this share of missing data a tile is dropped rather than shown. The
+ * Planetary Computer renders gaps as transparent pixels, which over the dark
+ * panel read as a blacked-out square.
+ */
+const MAX_MISSING = 0.3
+
 /** Sort helper: closest acquisition to the observation date. */
 function nearestTo(target: number) {
   return (a: StacItem, b: StacItem) => {
@@ -129,10 +202,19 @@ function dateOf(item: StacItem): string {
  * Pick a scene that is both near the observation date and reasonably clear.
  * Prefer the clearest scene within a year; fall back to the nearest in time.
  */
-function pickOptical(items: StacItem[], target: number): StacItem | undefined {
-  if (items.length === 0) return undefined
-  const clear = items.filter((item) => cloudOf(item) < 20)
-  return (clear.length > 0 ? clear : items).sort(nearestTo(target))[0]
+function pickOptical(
+  items: StacItem[],
+  target: number,
+  lon: number,
+  lat: number,
+): StacItem | undefined {
+  // Scenes whose footprint genuinely covers the site, falling back to the
+  // rest only if that leaves nothing.
+  const covering = items.filter((item) => containsPoint(item.geometry, lon, lat))
+  const usable = covering.length > 0 ? covering : items
+  if (usable.length === 0) return undefined
+  const clear = usable.filter((item) => cloudOf(item) < 20)
+  return (clear.length > 0 ? clear : usable).sort(nearestTo(target))[0]
 }
 
 const YEAR = 365 * 86_400_000
@@ -155,7 +237,7 @@ async function sentinel2(
   )
   // Empty means no usable scene, which is the caller's cue to fall back to
   // Landsat rather than show a placeholder.
-  const item = pickOptical(items, target)
+  const item = pickOptical(items, target, lon, lat)
   if (!item) return []
 
   const ndviExpression = '(B08-B04)/(B08+B04)'
@@ -202,6 +284,8 @@ async function sentinel2(
 
 /** Only used where Sentinel-2 cannot supply an optical view. */
 async function landsat(
+  lon: number,
+  lat: number,
   bbox: BBox,
   target: number,
   signal: AbortSignal,
@@ -216,7 +300,7 @@ async function landsat(
     },
     signal,
   )
-  const item = pickOptical(items, target)
+  const item = pickOptical(items, target, lon, lat)
   if (!item) {
     return {
       key: 'landsat',
@@ -345,6 +429,8 @@ export async function loadChips(
       if (chips.length > 0) return chips
     }
     const chip = await landsat(
+      lon,
+      lat,
       bbox,
       target,
       signal,
@@ -358,7 +444,17 @@ export async function loadChips(
     elevation(lon, lat, bbox, signal).then((chip) => [chip]),
     worldCover(lon, lat, bbox, signal).then((chip) => [chip]),
   ])
-  return settled.flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
+  const chips = settled.flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
+
+  // Render each tile once and drop the mostly-empty ones.
+  const checked = await Promise.all(
+    chips.map(async (chip) => {
+      if (!chip.imageUrl) return null
+      const missing = await missingFraction(chip.imageUrl, signal)
+      return missing > MAX_MISSING ? null : chip
+    }),
+  )
+  return checked.filter((chip): chip is Chip => chip !== null)
 }
 
 export { WORLDCOVER_CLASSES }

@@ -86,6 +86,9 @@ export default function RemoteSensing({ fid, lon, lat, measuredDate }: Props) {
               src={chip.imageUrl!}
               alt={`${chip.title} covering one square kilometre around the observation`}
               loading="lazy"
+              // Matches the CORS request the missing-data check already made,
+              // so the browser reuses that cache entry instead of refetching.
+              crossOrigin="anonymous"
               className="aspect-square w-full rounded border border-line bg-raised object-cover"
             />
             <figcaption className="mt-1.5">
